@@ -1,0 +1,18 @@
+#! /bin/sh
+. /usr/share/debconf/confmodule
+
+trap - CHLD
+
+# tell debconf about any preseeded language
+db_register debian-installer/language debconf/language
+if db_get debian-installer/language && [ "$RET" ]; then
+    db_set debconf/language "$RET"
+fi
+
+CDROM_CHECKER_IS_MENU=y UDPKG_QUIET=y udpkg --force-configure --configure cdrom-checker cdrom-detect
+RET=$?
+logger -t cdrom-checker-menu "cdrom-checker returned: $RET" 
+if [ "$RET" -eq 12 ]; then
+    reboot
+fi
+exit $RET

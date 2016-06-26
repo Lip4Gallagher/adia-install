@@ -1,0 +1,2 @@
+. /lib/debian-installer/detect-console
+setvtrgb /etc/vtrgb 2>/dev/null || true

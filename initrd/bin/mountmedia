@@ -1,0 +1,116 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = driver ]; then
+	WANTDRIVER=1
+elif [ "$1" = floppy ]; then
+	WANTFLOPPY=1
+elif [ "$1" = driver-injection-disk ]; then
+	WANTDRIVERINJECTIONDISK=1
+fi
+
+MNT=/media
+
+devlist() {
+	if [ "$WANTFLOPPY" ]; then
+		list-devices floppy
+	else
+		# Ordering: First look for USB media (also finding whole fixed
+		# disks, but that's ok). Then look for floppies. Finally, try
+		# scanning partitions last.
+		list-devices disk
+		list-devices maybe-usb-floppy
+		list-devices floppy
+		list-devices partition
+	fi
+}
+
+media_mounted() {
+	mount | cut -d' ' -f3 | grep -q "^$MNT$"
+}
+
+try_mount() {
+	# TO REMOVE, there is a bug somewhere in the kernel, the first
+	# mount command fail when changing floppy disk
+	# so we have to launch mount twice
+	mount $1 -tauto $MNT || true
+	umount $MNT || true
+	mount $1 -tauto $MNT
+	media_mounted && checkcontents $MNT
+}
+
+lsb_info() {
+    [ -f /etc/lsb-release ] || return 0
+    grep "^$1=" /etc/lsb-release |\
+        sed -e 's/\(.*\)/\1/;s/^[^=]*=//; s/^"//; s/"$//' | tr 'A-Z' 'a-z' || true
+}
+
+checkcontents() {
+
+
+	[ "$WANTDRIVER" ] && dir="$1 $1/firmware"
+	[ "$WANTDRIVERINJECTIONDISK" ] && dir=$1/$(lsb_info DISTRIB_ID)-drivers/$(lsb_info DISTRIB_CODENAME)
+
+	if [ ! -z "$dir" ]; then
+		for directory in $dir; do
+			if [ -d "$directory" ]; then
+				# Make sure this is driver media by checking the files on
+				# it. Check for regular debs, udebs, and to be on the safe
+				# side, check for *.ude files (msdos file names...)
+				for filename in $directory/*.deb $directory/*.udeb $directory/*.ude; do
+					if [ -f "$filename" ]; then
+						return 0 # success
+					fi
+				done
+			fi
+		done
+	else
+		return 0
+	fi
+	# umount can legitimatly fail if something is keeping
+	# it open
+	umount $1 2>/dev/null || true
+	return 1
+}
+
+if ! ( media_mounted && checkcontents $MNT ); then
+	# Special case for an already mounted /hd-media.
+	if [ -d /hd-media ] && checkcontents /hd-media; then
+		mount --bind /hd-media /media
+		exit 0
+	fi
+
+	if ! grep -q ^vfat /proc/modules ; then
+		log-output -t mountmedia modprobe -q vfat || true
+	fi
+
+	# Repeat twice if necessary, to accomodate devices that need some
+	# time to initialise, like USB devices.
+	for i in 1 2; do
+		for dev in $(devlist); do
+			if try_mount $dev; then
+				exit 0 # success
+			fi
+		done
+		
+		if [ "$i" = 1 ]; then       
+			# Give USB time to settle, make sure all devices are
+			# seen next time though.
+			sleep 5
+		fi
+	done
+
+	# Maybe the floppy module needs to be explicitly loaded?
+	DEV=/dev/fd0
+	if [ ! -e $DEV ]; then
+		log-output -t mountmedia modprobe -q floppy || true
+		update-dev --settle
+	fi
+
+	if [ ! -e "$DEV" ] || ! try_mount $DEV; then
+		# Maybe the system has an ide-floppy device?
+		log-output -t mountmedia modprobe -q ide-floppy || true
+		update-dev --settle
+		try_mount $DEV
+	fi
+fi

@@ -1,0 +1,93 @@
+#! /bin/sh -e
+
+. /usr/share/debconf/confmodule
+
+log() {
+	logger -t cdrom-detect "$@"
+}
+
+# Cannot just tell eject to eject /cdrom as it is not compatible
+# with busybox umount. Instead, unmount the cdrom first, and then
+# eject the device.
+CDDEV=$(mount | grep "on /cdrom" | cut -d ' ' -f 1)
+if [ -n "$CDDEV" ]; then
+	log "Unmounting and ejecting '$CDDEV'"
+	umount /cdrom || true
+
+	db_get cdrom-detect/eject
+	if [ "$RET" = false ]; then
+		log "Not ejecting CD, per debconf setting."
+	else
+		eject $CDDEV || true
+	fi
+else
+	log "Not ejecting CD, as nothing is mounted."
+fi
+
+ARCH="`udpkg --print-architecture`"
+if [ "$ARCH" = i386 ]; then
+	# Set CD-ROM drive parameters for post-reboot.
+
+	db_get cdrom-detect/cdrom_device
+	device="$RET"
+
+	db_get cdrom-detect/cdrom_hdparm
+	params="$RET"
+
+	if [ "$device" ] && [ "$params" ]; then
+		mappeddevice="`mapdevfs "$device"`"
+		cat >>/target/etc/hdparm.conf <<EOF
+
+# Added by debian-installer
+
+$mappeddevice {
+EOF
+		set -- $params
+		while [ "$1" ]; do
+			name="$1"
+			shift
+			case "$name" in
+			    -??*)
+				value="${name#-?}"
+				name="`printf '%s' "$name" | sed 's/^\(-.\).*/\1/'`"
+				;;
+			    -?*)
+				value="$1"
+				shift
+				;;
+			    *)
+				continue
+				;;
+			esac
+			boolvalue=no
+			case "$name" in
+			    -a) mappedname=read_ahead_sect ;;
+			    -A) mappedname=lookahead;		boolvalue=yes ;;
+			    -b) mappedname=bus;			boolvalue=yes ;;
+			    -B) mappedname=apm ;;
+			    -c) mappedname=io32_support ;;
+			    -d) mappedname=dma;			boolvalue=yes ;;
+			    -D) mappedname=defect_mana;		boolvalue=yes ;;
+			    -E) mappedname=cd_speed ;;
+			    -m) mappedname=mult_sect_io ;;
+			    -P) mappedname=prefetch_sect ;;
+			    -S) mappedname=spindown_time ;;
+			    -u) mappedname=interrupt_unmask;	boolvalue=yes ;;
+			    -X) mappedname=transfer_mode ;;
+			    *)  continue ;;
+			esac
+			if [ "$boolvalue" = yes ]; then
+				case "$value" in
+				    0) mappedvalue=off ;;
+				    1) mappedvalue=on ;;
+				    *) continue ;;
+				esac
+			else
+				mappedvalue="$value"
+			fi
+			printf '\t%s = %s\n' "$mappedname" "$mappedvalue" \
+				>>/target/etc/hdparm.conf
+		done
+		echo '}' >>/target/etc/hdparm.conf
+	fi
+fi

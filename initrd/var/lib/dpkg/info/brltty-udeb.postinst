@@ -1,0 +1,3 @@
+#!/bin/sh
+[ -n "$(debconf-get tasksel/desktop)" ] || debconf-set-selections /usr/share/brltty-udeb/mate-preseed.cfg
+exit 0

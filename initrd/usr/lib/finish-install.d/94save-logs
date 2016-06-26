@@ -1,0 +1,25 @@
+#!/bin/sh
+# Intentionally not set -e.
+logsavedir=/target/var/log/installer
+
+mkdir -p $logsavedir/cdebconf
+
+# Make sure debconf has saved the database.
+. /usr/share/debconf/confmodule
+db_x_save
+
+cp /var/log/* $logsavedir
+chmod 600 $logsavedir/*
+if [ -e $logsavedir/media-info ]; then
+	chmod 644 $logsavedir/media-info
+fi
+chmod 755 $logsavedir/cdebconf # done this way for idempotency
+
+report-hw > $logsavedir/hardware-summary
+cp /var/lib/dpkg/status $logsavedir
+cp /etc/lsb-release $logsavedir
+chroot /target gzip -9c /var/lib/dpkg/status > $logsavedir/initial-status.gz
+
+cp /var/lib/cdebconf/questions.dat /var/lib/cdebconf/templates.dat \
+	$logsavedir/cdebconf
+chmod 600 $logsavedir/cdebconf/*

@@ -1,0 +1,4 @@
+title HIMS Braille Sense with QWERTY Keyboard
+include common.kti
+include scroll.kti
+include qwerty.kti
